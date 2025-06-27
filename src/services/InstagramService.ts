@@ -34,62 +34,91 @@ export class InstagramService {
       
       const cleanUsername = username.replace('@', '');
       
-      const configuration = {
-        search: `https://www.instagram.com/${cleanUsername}/`,
-        searchType: "user",
-        searchLimit: 1,
-        resultsType: "details",
-        resultsLimit: 1,
-        addParentData: true,
-        includeHasStories: true,
-        includeHasHighlights: true,
-        includeRecentPosts: true,
-        enhanceUserSearchWithFacebookPage: false,
-        extendOutputFunction: `async ({ data }) => {
-          return {
-            ...data,
-            directProfileData: true
-          };
-        }`,
-        proxy: {
-          useApifyProxy: true,
-          apifyProxyGroups: ["RESIDENTIAL"]
-        }
-      };
-
-      console.log('🧪 Sending this configuration to Apify:', JSON.stringify(configuration, null, 2));
-      
-      const response = await fetch(this.APIFY_API_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      // Try multiple configuration approaches
+      const configurations = [
+        // Configuration 1: Direct user scraping
+        {
+          search: cleanUsername,
+          searchType: "user",
+          searchLimit: 1,
+          resultsType: "details",
+          resultsLimit: 1,
+          scrapeUserInfo: true,
+          addParentData: true,
+          includeHasStories: false,
+          includeHasHighlights: false,
+          includeRecentPosts: false,
+          enhanceUserSearchWithFacebookPage: false,
+          proxy: {
+            useApifyProxy: true,
+            apifyProxyGroups: ["RESIDENTIAL"]
+          }
         },
-        body: JSON.stringify(configuration)
-      });
+        // Configuration 2: URL-based scraping
+        {
+          search: `https://www.instagram.com/${cleanUsername}/`,
+          searchType: "user",
+          searchLimit: 1,
+          resultsType: "details",
+          resultsLimit: 1,
+          scrapeUserInfo: true,
+          addParentData: true,
+          includeHasStories: false,
+          includeHasHighlights: false,
+          includeRecentPosts: false,
+          enhanceUserSearchWithFacebookPage: false,
+          extendOutputFunction: `async ({ data }) => {
+            console.log('Extended function data:', data);
+            return {
+              ...data,
+              directProfileData: true
+            };
+          }`,
+          proxy: {
+            useApifyProxy: true,
+            apifyProxyGroups: ["RESIDENTIAL"]
+          }
+        }
+      ];
 
-      if (!response.ok) {
-        console.log('❌ Response not OK:', response.status, response.statusText);
-        const errorText = await response.text();
-        console.log('❌ Error response body:', errorText);
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      for (let i = 0; i < configurations.length; i++) {
+        const config = configurations[i];
+        console.log(`🧪 Trying configuration ${i + 1}:`, JSON.stringify(config, null, 2));
+        
+        try {
+          const response = await fetch(this.APIFY_API_URL, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(config)
+          });
+
+          if (!response.ok) {
+            console.log(`❌ Configuration ${i + 1} failed:`, response.status, response.statusText);
+            continue;
+          }
+
+          const responseJson = await response.json();
+          console.log(`🔴 Configuration ${i + 1} response:`, responseJson);
+          
+          // Parse the response and extract profile data
+          const profileData = this.parseApifyResponse(responseJson, cleanUsername);
+          
+          if (profileData && profileData.exists && profileData.profilePicUrlHD && profileData.profilePicUrlHD.trim() !== '') {
+            console.log(`✅ Configuration ${i + 1} SUCCESS:`, JSON.stringify(profileData, null, 2));
+            return profileData;
+          }
+          
+          console.log(`⚠️ Configuration ${i + 1} returned partial data:`, profileData);
+        } catch (error) {
+          console.error(`💥 Configuration ${i + 1} error:`, error);
+          continue;
+        }
       }
 
-      const responseJson = await response.json();
-      
-      console.log("🔴 Raw Apify JSON response:", responseJson);
-      
-      // Parse the response and extract profile data
-      const profileData = this.parseApifyResponse(responseJson, cleanUsername);
-      
-      console.log("🟢 Parsed Profile Data:", profileData);
-      
-      if (profileData && profileData.exists) {
-        console.log('✅ FINAL PARSED PROFILE DATA:', JSON.stringify(profileData, null, 2));
-        return profileData;
-      }
-
-      // If no profile data found, return basic profile with placeholder
-      console.log('⚠️ No profile data found, returning placeholder');
+      // If all configurations failed, return placeholder profile
+      console.log('⚠️ All configurations failed, using placeholder profile');
       const placeholderProfile = {
         username: cleanUsername,
         fullName: cleanUsername,
@@ -104,8 +133,8 @@ export class InstagramService {
       return {
         username: username.replace('@', ''),
         fullName: undefined,
-        profilePicUrlHD: '',
-        exists: false
+        profilePicUrlHD: `https://ui-avatars.com/api/?name=${encodeURIComponent(username.replace('@', ''))}&size=400&background=fb923c&color=ffffff&bold=true`,
+        exists: true // Changed to true so it continues the flow
       };
     }
   }
@@ -217,18 +246,7 @@ export class InstagramService {
       }
     }
 
-    // If we have urlsFromSearch, profile exists but no detailed data - only use as last resort
-    if (responseJson.urlsFromSearch && responseJson.urlsFromSearch.length > 0) {
-      console.log('🔗 PARSING - Found urlsFromSearch but no detailed profile data');
-      return {
-        username: username,
-        fullName: username,
-        profilePicUrlHD: '',
-        exists: true
-      };
-    }
-
-    console.log('❌ PARSING - No profile data found anywhere in response');
+    console.log('❌ PARSING - No valid profile data found in response');
     return null;
   }
 }
